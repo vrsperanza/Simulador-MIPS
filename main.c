@@ -224,40 +224,7 @@ ALU * ALU_init(char * option, int * result, char * zero, int * input0, int * inp
 	alu->input1 = input1;
 	alu->dependency0 = dependency0;
 	alu->dependency1 = dependency1;
-	
-    pthread_create(alu->thread,NULL,ALU_main,(void*)alu);
-	
-	return alu;
-}
 
-
-int main()
-{	
-	int A = 0;
-	int B = 1;
-	int C = 2;
-	int D = 3;
-	
-	
-	char mux1Op;
-	char mux2Op;
-	char aluOp;
-	
-	int mux1Result;
-	int mux2Result;
-	int aluResult;
-	char aluZero;
-	int aluOut;
-	
-	MUX_1bit * mux1 = MUX_1bit_init(&mux1Op, &mux1Result, &A,  &B);
-	MUX_2bits * mux2 = MUX_2bits_init(&mux2Op, &mux2Result, &A,  &B,  &C,  &D);
-	
-	ALU * alu = ALU_init(&aluOp, &aluResult, &aluZero, &mux1Result, &mux2Result, mux1->done, mux2->done);
-	
-	
-	REGISTER * aluOutReg = REGISTER_init(&aluResult, &aluOut);
-	
-	while(1){
 		int intOp1, intOp2, intOp3;
 		scanf("%d%d%d%d", &A, &intOp1, &intOp2, &intOp3);
 		mux1Op = (char)intOp1;
