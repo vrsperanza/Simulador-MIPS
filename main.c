@@ -60,6 +60,96 @@ MUX_1bit * MUX_1bit_init(char * option, int * result, int * input0, int * input1
 	return mux;
 }
 
+// ****************************** SIGN EXTEND ******************************
+typedef struct SIGN_EXTEND{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	sem_t * dependency;
+	int * input;
+	int * output;
+} SIGN_EXTEND;
+
+void* SIGN_EXTEND_main(void * args){
+	SIGN_EXTEND * signals = (SIGN_EXTEND*)args;
+	while(1){
+		sem_wait(signals->begin);
+		
+		sem_guarantee(signals->dependency);
+		
+		*(signals->output) = (int)(short)*(signals->input);
+		
+		sem_post(signals->done);
+	}
+}
+
+SIGN_EXTEND * SIGN_EXTEND_init(int * input, int * output, sem_t * dependency){
+	SIGN_EXTEND * sign = (SIGN_EXTEND*)malloc(sizeof(SIGN_EXTEND));
+	
+    sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
+	
+	sign->begin = (sem_t*)malloc(sizeof(sem_t));
+	sign->done = (sem_t*)malloc(sizeof(sem_t));
+	
+	sign->dependency = dependency;
+	
+    sem_init(sign->begin, 0, 0);
+    sem_init(sign->done, 0, 0);
+	
+	sign->input = input;
+	sign->output = output;
+	
+    pthread_create(sign->thread,NULL,SIGN_EXTEND_main,(void*)sign);
+	
+	return sign;
+}
+
+// ****************************** SHIFT LEFT ******************************
+typedef struct SHIFT_LEFT{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	sem_t * dependency;
+	int * input;
+	int * output;
+	int amount;
+} SHIFT_LEFT;
+
+void* SHIFT_LEFT_main(void * args){
+	SHIFT_LEFT * signals = (SHIFT_LEFT*)args;
+	while(1){
+		sem_wait(signals->begin);
+		
+		sem_guarantee(signals->dependency);
+		
+		*(signals->output) = *(signals->input) << signals->amount;
+		
+		sem_post(signals->done);
+	}
+}
+
+SHIFT_LEFT * SHIFT_LEFT_init(int * input, int * output, int amount, sem_t * dependency){
+	SHIFT_LEFT * sign = (SHIFT_LEFT*)malloc(sizeof(SHIFT_LEFT));
+	
+    sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
+	
+	sign->begin = (sem_t*)malloc(sizeof(sem_t));
+	sign->done = (sem_t*)malloc(sizeof(sem_t));
+	
+	sign->dependency = dependency;
+	
+    sem_init(sign->begin, 0, 0);
+    sem_init(sign->done, 0, 0);
+	
+	sign->input = input;
+	sign->output = output;
+	
+	sign->amount = amount;
+	
+    pthread_create(sign->thread,NULL,SHIFT_LEFT_main,(void*)sign);
+	
+	return sign;
+}
 
 // ****************************** MUX 2 BITS ******************************
 typedef struct MUX_2bits{
@@ -79,7 +169,7 @@ void* MUX_2bits_main(void * args){
 	while(1){
 		sem_wait(signals->begin);
 		
-		int op = *(signals->option)
+		int op = *(signals->option);
 		
 		switch(*(signals->option)){
 			case 0:
@@ -162,6 +252,72 @@ REGISTER * REGISTER_init(int * input, int * output){
 	return reg;
 }
 
+// ****************************** REGISTERS *******************************
+typedef struct REGISTERS{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	sem_t * dependency0;
+	sem_t * dependency1;
+	sem_t * dependency2;
+	
+	char * regWrite;
+	
+	int * readRegister1;
+	int * readRegister2;
+	int * writeRegister;
+	int * writeData;
+	
+	int * readData1;
+	int * readData2;
+	
+	int * registers;
+} REGISTERS;
+
+void * REGISTERS_main(void * args){
+	REGISTERS * registers = (REGISTERS*)args;
+	while(1){
+		sem_wait(registers->begin);
+		
+		sem_guarantee(registers->dependency0);
+		sem_guarantee(registers->dependency1);
+		sem_guarantee(registers->dependency2);
+		
+		if(*(registers->regWrite)){
+			registers->registers[*(registers->writeRegister)] = *(registers->writeData);
+		}
+		else{
+			*(registers->readData1) = registers->registers[*(registers->readRegister1)];
+			*(registers->readData2) = registers->registers[*(registers->readRegister2)];
+		}
+		
+		sem_post(registers->done);
+	}
+}
+
+REGISTERS * REGISTERS_init(int * readRegister1, int * readRegister2, int * writeRegister, 
+						   int * writeData, int * readData1, int * readData2, char * regWrite,
+						   sem_t * dependency0, sem_t * dependency1, sem_t * dependency2){
+	REGISTERS * registers = (REGISTERS*)malloc(sizeof(REGISTERS));
+	registers->readRegister1 = readRegister1;
+	registers->readRegister2 = readRegister2;
+	registers->writeRegister = writeRegister;
+	registers->writeData = writeData;
+	registers->readData1 = readData1;
+	registers->readData2 = readData2;
+	registers->regWrite = regWrite;
+	
+	
+	registers->registers = (int*)malloc(sizeof(int) * 32);
+	
+    sem_init(registers->begin, 0, 0);
+    sem_init(registers->done, 0, 0);
+	
+    pthread_create(registers->thread,NULL,REGISTERS_main,(void*)registers);
+	
+	return registers;
+}
+
 // ********************************* ALU **********************************
 typedef struct ALU{
 	pthread_t * thread;
@@ -177,7 +333,7 @@ typedef struct ALU{
 	int * input1;
 } ALU;
 
-void* ALU_main(void * args){
+void * ALU_main(void * args){
 	ALU * signals = (ALU*)args;
 	while(1){
 		sem_wait(signals->begin);
@@ -230,7 +386,151 @@ ALU * ALU_init(char * option, int * result, char * zero, int * input0, int * inp
 	return alu;
 }
 
+// ******************************* MEMORY *********************************
+typedef struct MEMORY{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	sem_t * dependency0;
+	sem_t * dependency1;
+	
+	char * memRead;
+	char * memWrite;
+	int * address;
+	int * writeData;
+	int * output;
+	char * memory;
+} MEMORY;
 
+void * MEMORY_main(void * args){
+	MEMORY * memory = (MEMORY*)args;
+	while(1){
+		sem_wait(memory->begin);
+		
+		sem_guarantee(memory->dependency0);
+		sem_guarantee(memory->dependency1);
+		
+		if(*(memory->memRead))
+			*(memory->output) = memory->memory[*(memory->address)];
+		else if(*(memory->memWrite))
+			memory->memory[*(memory->address)] = *(memory->writeData);
+		
+		sem_post(memory->done);
+	}
+}
+
+MEMORY * MEMORY_init(char * memRead, char * memWrite, int * address, int * writeData, 
+					 int * output, sem_t * begin, sem_t * done, sem_t * dependency0,
+					 sem_t * dependency1, int byteCapacity){
+	MEMORY * memory = (MEMORY*)malloc(sizeof(MEMORY));
+	memory->memRead = memRead;
+	memory->memWrite = memWrite;
+	memory->address = address;
+	memory->writeData = writeData;
+	memory->output = output;
+	
+	memory->dependency0 = dependency0;
+	memory->dependency1 = dependency1;
+	
+	memory->memory = (char*)malloc(sizeof(char) * byteCapacity);
+	
+    sem_init(memory->begin, 0, 0);
+    sem_init(memory->done, 0, 0);
+	
+    pthread_create(memory->thread,NULL,MEMORY_main,(void*)memory);
+	
+	return memory;
+}
+
+// ***************************** ALU CONTROL *******************************
+typedef struct ALU_CONTROL{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	sem_t * dependency;
+	int * input;
+	int * output;
+	char * option;
+} ALU_CONTROL;
+
+void* ALU_CONTROL_main(void * args){
+	ALU_CONTROL * signals = (ALU_CONTROL*)args;
+	while(1){
+		sem_wait(signals->begin);
+		
+		sem_guarantee(signals->dependency);
+		
+		// DEFINIR COMPORTAMENTO DA ALU CONTROL AQUI		
+		
+		sem_post(signals->done);
+	}
+}
+
+ALU_CONTROL * ALU_CONTROL_init(int * input, int * output, char * option, sem_t * dependency){
+	ALU_CONTROL * sign = (ALU_CONTROL*)malloc(sizeof(ALU_CONTROL));
+	
+    sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
+	
+	sign->begin = (sem_t*)malloc(sizeof(sem_t));
+	sign->done = (sem_t*)malloc(sizeof(sem_t));
+	
+    sem_init(sign->begin, 0, 0);
+    sem_init(sign->done, 0, 0);
+	
+	sign->input = input;
+	sign->output = output;
+	
+	sign->option = option;
+	
+	sign->dependency = dependency;
+	
+    pthread_create(sign->thread,NULL,ALU_CONTROL_main,(void*)sign);
+	
+	return sign;
+}
+
+// ******************************* CONTROL *********************************
+typedef struct CONTROL{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	char * option;
+	int * output;
+} CONTROL;
+
+void* CONTROL_main(void * args){
+	CONTROL * signals = (CONTROL*)args;
+	while(1){
+		sem_wait(signals->begin);
+		
+		// DEFINIR COMPORTAMENTO DA UNIDADE DE CONTROLE AQUI
+		
+		sem_post(signals->done);
+	}
+}
+
+CONTROL * CONTROL_init(int * output, char * option){
+	CONTROL * sign = (CONTROL*)malloc(sizeof(CONTROL));
+	
+    sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
+	
+	sign->begin = (sem_t*)malloc(sizeof(sem_t));
+	sign->done = (sem_t*)malloc(sizeof(sem_t));
+	
+    sem_init(sign->begin, 0, 0);
+    sem_init(sign->done, 0, 0);
+	
+	sign->output = output;
+	
+	sign->option = option;
+	
+    pthread_create(sign->thread,NULL,CONTROL_main,(void*)sign);
+	
+	return sign;
+}
+
+
+// ******************************** MAIN **********************************
 int main()
 {	
 	int A = 0;
