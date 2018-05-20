@@ -561,7 +561,9 @@ void* CONTROL_main(void * args){
 		#define BEQ 0b000100
 		#define BNE 0b000101
 
-		signals->currentState |= (s==0) | ((s==1) & ( (op == JUMP)|(op == JR)|(op==JALR) )) | (s==2) | (s==6) | (s==10);
+		printf("op = %d\n", (int)op);
+
+		signals->currentState |= ( (s==0) | ((s==1) & ( (op == JUMP)|(op == JR)|(op==JALR) )) | (s==2) | (s==6) | (s==10) );
 
 		signals->currentState |= ( ( (s==1) & ( (op==LW)|(op==SW)|(op==ADDI)|(op==RTYPE)|(op==ANDI)|(op==JAL)|(op==JALR) ) ) |
 															 ( (s==2) & (op!=SW) ) | (s==6) | (s==10)	) << 1;
@@ -572,12 +574,15 @@ void* CONTROL_main(void * args){
 		signals->currentState |= ( ( (s==1) & ( (op==BEQ)|(op==JUMP)|(op==ANDI)|(op==BNE)|(op==JR)|(op==JAL)|(op==JALR) ) ) |
 	 															((s==2) & (op==ADDI)) | (s==10) ) << 3;
 
+		printf("estado anterior= %d\n", (int)s);
 		s = signals->currentState;
+
+		printf("estado atual= %d\n", (int)s);
 
 		*(signals->output) = 0;
 		*(signals->output) |= (s==7);	//regDST0
 		*(signals->output) |= ((s==14) | (s==15)) << 1; //regDST1
-		*(signals->output) |= ((s==4) | (s==7) | (s==11) | (s==14) | (s==14)) << 2;	//regWrite
+		*(signals->output) |= ((s==4) | (s==7) | (s==11) | (s==14) | (s==15)) << 2;	//regWrite
 		*(signals->output) |= ((s==2) | (s==6) | (s==8) | (s==10) | (s==12)) << 3;	//ALUSrcA
 		*(signals->output) |= ((s==0) | (s==1)) << 4; //ALUSrcB0
 		*(signals->output) |= ((s==1) | (s==2) | (s==10)) << 5;	//ALUSrcB1
@@ -620,65 +625,30 @@ CONTROL * CONTROL_init(int * output, char * option){
 
 	return sign;
 }
-
-
 // ******************************** MAIN **********************************
 int main()
 {
-	int A = 0;
-	int B = 1;
-	int C = 2;
-	int D = 3;
+	char option = 0;
+	int output = 0;
 
-
-	char mux1Op;
-	char mux2Op;
-	char aluOp;
-
-	int mux1Result;
-	int mux2Result;
-	int aluResult;
-	char aluZero;
-	int aluOut;
-
-	MUX_1bit * mux1 = MUX_1bit_init(&mux1Op, &mux1Result, &A,  &B);
-	MUX_2bits * mux2 = MUX_2bits_init(&mux2Op, &mux2Result, &A,  &B,  &C,  &D);
-
-	ALU * alu = ALU_init(&aluOp, &aluResult, &aluZero, &mux1Result, &mux2Result, mux1->done, mux2->done);
-
-
-	REGISTER * aluOutReg = REGISTER_init(&aluResult, &aluOut);
+	CONTROL * c = CONTROL_init(&output, &option);
 
 	while(1){
-		int intOp1, intOp2, intOp3;
-		scanf("%d%d%d%d", &A, &intOp1, &intOp2, &intOp3);
-		mux1Op = (char)intOp1;
-		mux2Op = (char)intOp2;
-		aluOp = (char)intOp3;
+		option=0;
+		for(int i = 0; i < 6; i++){
+			int x;
+			scanf("%d", &x);
+			option <<= 1;
+			option |= x;
 
-		// Run operations
-		sem_post(mux1->begin);
-		sem_post(mux2->begin);
-		sem_post(alu->begin);
+		}
+			sem_post(c->begin);
 
-		sem_guarantee(mux1->done);
-		sem_guarantee(mux2->done);
-		sem_guarantee(alu->done);
-
-		sem_wait(alu->done);
-		sem_wait(mux1->done);
-		sem_wait(mux2->done);
-
-		printf("%d %d %d\n", aluResult, (int)aluZero, aluOut);
-
-		// Update registers
-		sem_post(aluOutReg->begin);
-
-
-		sem_wait(aluOutReg->done);
-
-
-		printf("%d %d %d\n", aluResult, (int)aluZero, aluOut);
+		sem_wait(c->done);
+	  for(int i=0; i < 32; i++){
+			printf("%d", output%2);
+			output >>= 1;
+		}
 	}
 
     return 0;
