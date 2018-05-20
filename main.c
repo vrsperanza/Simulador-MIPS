@@ -10,54 +10,121 @@ void sem_guarantee(sem_t * sem){
 	sem_post(sem);
 }
 
-// ****************************** MUX 1 BIT ******************************
-typedef struct MUX_1bit{
+char pc_write(int UCOut, char ALUZero){
+	return ((UCOut >> 11) & 1) | ( ((UCOut >> 10) & 1) & ( (ALUZero & ((UCOut >> 10) & 1)) | (!ALUZero & !((UCOut >> 10) & 1)) ) );
+}
+
+char ir_write(int UCOut){
+	return (UCOut >> 16) & 1;
+}
+
+// ****************************** SIGN SPLIT *****************************
+typedef struct SIGN_SPLIT{
 	pthread_t * thread;
 	sem_t * begin;
 	sem_t * done;
-	char * option;
-	int * input0;
-	int * input1;
-	int * result;
-} MUX_1bit;
+	sem_t * dependency;
+	int * input;
+	char * output;
+	
+	int splitBegin;
+	int splitEnd;
+	int splitMask;
+	
+} SIGN_SPLIT;
 
-void* MUX_1bit_main(void * args){
-	MUX_1bit * signals = (MUX_1bit*)args;
+void* SIGN_SPLIT_main(void * args){
+	SIGN_SPLIT * signals = (SIGN_SPLIT*)args;
 	while(1){
 		sem_wait(signals->begin);
 
-		switch(*(signals->option)){
-			case 0:
-				*(signals->result) = *(signals->input0);
-				break;
-			case 1:
-				*(signals->result) = *(signals->input1);
-				break;
-		}
+		sem_guarantee(signals->dependency);
+
+		*(signals->output) = (*(signals->input) & signals->splitMask) >> signals->splitBegin;
 
 		sem_post(signals->done);
 	}
 }
 
-MUX_1bit * MUX_1bit_init(char * option, int * result, int * input0, int * input1){
-	MUX_1bit * mux = (MUX_1bit*)malloc(sizeof(MUX_1bit));
+SIGN_SPLIT * SIGN_SPLIT_init(int * input, char * output, int splitBegin, int splitEnd, sem_t * dependency){
+	SIGN_SPLIT * sign = (SIGN_SPLIT*)malloc(sizeof(SIGN_SPLIT));
 
-    mux->thread = (pthread_t*)malloc(sizeof(pthread_t));
+    sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
 
-	mux->begin = (sem_t*)malloc(sizeof(sem_t));
-	mux->done = (sem_t*)malloc(sizeof(sem_t));
+	sign->begin = (sem_t*)malloc(sizeof(sem_t));
+	sign->done = (sem_t*)malloc(sizeof(sem_t));
 
-    sem_init(mux->begin, 0, 0);
-    sem_init(mux->done, 0, 0);
+	sign->dependency = dependency;
 
-	mux->option = option;
-	mux->input0 = input0;
-	mux->input1 = input1;
-	mux->result = result;
+    sem_init(sign->begin, 0, 0);
+    sem_init(sign->done, 0, 0);
 
-    pthread_create(mux->thread,NULL,MUX_1bit_main,(void*)mux);
+	sign->input = input;
+	sign->output = output;
 
-	return mux;
+	sign->splitBegin = splitBegin;
+	sign->splitEnd = splitEnd;
+	sign->splitMask = 0;
+	for(int i = splitBegin; i <= splitEnd; i++)
+		sign->splitMask |= 1 << i;
+	
+    pthread_create(sign->thread,NULL,SIGN_SPLIT_main,(void*)sign);
+
+	return sign;
+}
+
+// **************************** SIGN BIGSPLIT ****************************
+typedef struct SIGN_BIGSPLIT{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	sem_t * dependency;
+	int * input;
+	int * output;
+	
+	int splitBegin;
+	int splitEnd;
+	int splitMask;
+	
+} SIGN_BIGSPLIT;
+
+void* SIGN_BIGSPLIT_main(void * args){
+	SIGN_BIGSPLIT * signals = (SIGN_BIGSPLIT*)args;
+	while(1){
+		sem_wait(signals->begin);
+		
+		sem_guarantee(signals->dependency);
+		*(signals->output) = (*(signals->input) & signals->splitMask) >> signals->splitBegin;
+
+		sem_post(signals->done);
+	}
+}
+
+SIGN_BIGSPLIT * SIGN_BIGSPLIT_init(int * input, int * output, int splitBegin, int splitEnd, sem_t * dependency){
+	SIGN_BIGSPLIT * sign = (SIGN_BIGSPLIT*)malloc(sizeof(SIGN_BIGSPLIT));
+
+    sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
+
+	sign->begin = (sem_t*)malloc(sizeof(sem_t));
+	sign->done = (sem_t*)malloc(sizeof(sem_t));
+
+	sign->dependency = dependency;
+
+    sem_init(sign->begin, 0, 0);
+    sem_init(sign->done, 0, 0);
+
+	sign->input = input;
+	sign->output = output;
+
+	sign->splitBegin = splitBegin;
+	sign->splitEnd = splitEnd;
+	sign->splitMask = 0;
+	for(int i = splitBegin; i <= splitEnd; i++)
+		sign->splitMask |= 1 << i;
+	
+    pthread_create(sign->thread,NULL,SIGN_BIGSPLIT_main,(void*)sign);
+
+	return sign;
 }
 
 // ****************************** SIGN EXTEND ******************************
@@ -151,11 +218,76 @@ SHIFT_LEFT * SHIFT_LEFT_init(int * input, int * output, int amount, sem_t * depe
 	return sign;
 }
 
+// ****************************** MUX 1 BIT ******************************
+typedef struct MUX_1bit{
+	pthread_t * thread;
+	sem_t * begin;
+	sem_t * done;
+	sem_t * dependency0;
+	sem_t * dependency1;
+	sem_t * dependency2;
+	char * option;
+	int * input0;
+	int * input1;
+	int * result;
+} MUX_1bit;
+
+void* MUX_1bit_main(void * args){
+	MUX_1bit * signals = (MUX_1bit*)args;
+	while(1){
+		sem_wait(signals->begin);
+
+		sem_guarantee(signals->dependency0);
+		sem_guarantee(signals->dependency1);
+		sem_guarantee(signals->dependency2);
+		
+		switch(*(signals->option)){
+			case 0:
+				*(signals->result) = *(signals->input0);
+				break;
+			case 1:
+				*(signals->result) = *(signals->input1);
+				break;
+		}
+
+		sem_post(signals->done);
+	}
+}
+
+MUX_1bit * MUX_1bit_init(char * option, int * result, int * input0, int * input1, sem_t * dependency0, sem_t * dependency1, sem_t * dependency2){
+	MUX_1bit * mux = (MUX_1bit*)malloc(sizeof(MUX_1bit));
+
+    mux->thread = (pthread_t*)malloc(sizeof(pthread_t));
+
+	mux->begin = (sem_t*)malloc(sizeof(sem_t));
+	mux->done = (sem_t*)malloc(sizeof(sem_t));
+	mux->dependency0 = dependency0;
+	mux->dependency1 = dependency1;
+	mux->dependency2 = dependency2;
+	
+    sem_init(mux->begin, 0, 0);
+    sem_init(mux->done, 0, 0);
+
+	mux->option = option;
+	mux->input0 = input0;
+	mux->input1 = input1;
+	mux->result = result;
+
+    pthread_create(mux->thread,NULL,MUX_1bit_main,(void*)mux);
+
+	return mux;
+}
+
 // ****************************** MUX 2 BITS ******************************
 typedef struct MUX_2bits{
 	pthread_t * thread;
 	sem_t * begin;
 	sem_t * done;
+	sem_t * dependency0;
+	sem_t * dependency1;
+	sem_t * dependency2;
+	sem_t * dependency3;
+	sem_t * dependency4;
 	char * option;
 	int * input0;
 	int * input1;
@@ -169,6 +301,12 @@ void* MUX_2bits_main(void * args){
 	while(1){
 		sem_wait(signals->begin);
 
+		sem_guarantee(signals->dependency0);
+		sem_guarantee(signals->dependency1);
+		sem_guarantee(signals->dependency2);
+		sem_guarantee(signals->dependency3);
+		sem_guarantee(signals->dependency4);
+		
 		int op = *(signals->option);
 
 		switch(*(signals->option)){
@@ -190,7 +328,8 @@ void* MUX_2bits_main(void * args){
 	}
 }
 
-MUX_2bits * MUX_2bits_init(char * option, int * result, int * input0, int * input1, int * input2, int * input3){
+MUX_2bits * MUX_2bits_init(char * option, int * result, int * input0, int * input1, int * input2, int * input3,
+							sem_t * dependency0, sem_t * dependency1, sem_t * dependency2, sem_t * dependency3, sem_t * dependency4){
 	MUX_2bits * mux = (MUX_2bits*)malloc(sizeof(MUX_2bits));
 
     mux->thread = (pthread_t*)malloc(sizeof(pthread_t));
@@ -201,6 +340,12 @@ MUX_2bits * MUX_2bits_init(char * option, int * result, int * input0, int * inpu
     sem_init(mux->begin, 0, 0);
     sem_init(mux->done, 0, 0);
 
+	mux->dependency0 = dependency0;
+	mux->dependency1 = dependency1;
+	mux->dependency2 = dependency2;
+	mux->dependency3 = dependency3;
+	mux->dependency4 = dependency4;
+	
 	mux->option = option;
 	mux->input0 = input0;
 	mux->input1 = input1;
@@ -242,7 +387,7 @@ REGISTER * REGISTER_init(int * input, int * output){
 	reg->done = (sem_t*)malloc(sizeof(sem_t));
 
     sem_init(reg->begin, 0, 0);
-    sem_init(reg->done, 0, 0);
+    sem_init(reg->done, 0, 1);
 
 	reg->input = input;
 	reg->output = output;
@@ -260,6 +405,8 @@ typedef struct REGISTERS{
 	sem_t * dependency0;
 	sem_t * dependency1;
 	sem_t * dependency2;
+	sem_t * dependency3;
+	sem_t * dependency4;
 
 	char * regWrite;
 
@@ -282,6 +429,8 @@ void * REGISTERS_main(void * args){
 		sem_guarantee(registers->dependency0);
 		sem_guarantee(registers->dependency1);
 		sem_guarantee(registers->dependency2);
+		sem_guarantee(registers->dependency3);
+		sem_guarantee(registers->dependency4);
 
 		if(*(registers->regWrite)){
 			registers->registers[*(registers->writeRegister)] = *(registers->writeData);
@@ -297,7 +446,8 @@ void * REGISTERS_main(void * args){
 
 REGISTERS * REGISTERS_init(int * readRegister1, int * readRegister2, int * writeRegister,
 						   int * writeData, int * readData1, int * readData2, char * regWrite,
-						   sem_t * dependency0, sem_t * dependency1, sem_t * dependency2){
+						   sem_t * dependency0, sem_t * dependency1, sem_t * dependency2, sem_t * dependency3, sem_t * dependency4){
+							   
 	REGISTERS * registers = (REGISTERS*)malloc(sizeof(REGISTERS));
 	registers->readRegister1 = readRegister1;
 	registers->readRegister2 = readRegister2;
@@ -306,14 +456,20 @@ REGISTERS * REGISTERS_init(int * readRegister1, int * readRegister2, int * write
 	registers->readData1 = readData1;
 	registers->readData2 = readData2;
 	registers->regWrite = regWrite;
-
+	registers->dependency0 = dependency0;
+	registers->dependency1 = dependency1;
+	registers->dependency2 = dependency2;
+	registers->dependency3 = dependency3;
+	registers->dependency4 = dependency4;
 
 	registers->registers = (int*)malloc(sizeof(int) * 32);
-
+	registers->begin = (sem_t*)malloc(sizeof(sem_t));
+	registers->done = (sem_t*)malloc(sizeof(sem_t));
     sem_init(registers->begin, 0, 0);
-    sem_init(registers->done, 0, 0);
+    sem_init(registers->done, 0, 1);
 
-    pthread_create(registers->thread,NULL,REGISTERS_main,(void*)registers);
+	registers->thread = (pthread_t*)malloc(sizeof(pthread_t));
+    pthread_create(registers->thread,NULL,REGISTERS_main,(void*)registers);		
 
 	return registers;
 }
@@ -325,6 +481,7 @@ typedef struct ALU{
 	sem_t * done;
 	sem_t * dependency0;
 	sem_t * dependency1;
+	sem_t * dependency2;
 
 	char * option;
 	int * result;
@@ -340,6 +497,7 @@ void * ALU_main(void * args){
 
 		sem_guarantee(signals->dependency0);
 		sem_guarantee(signals->dependency1);
+		sem_guarantee(signals->dependency2);
 
 		switch(*(signals->option)){
 			case 0:
@@ -373,7 +531,7 @@ void * ALU_main(void * args){
 	}
 }
 
-ALU * ALU_init(char * option, int * result, char * zero, int * input0, int * input1, sem_t * dependency0, sem_t * dependency1){
+ALU * ALU_init(char * option, int * result, char * zero, int * input0, int * input1, sem_t * dependency0, sem_t * dependency1, sem_t * dependency2){
 	ALU * alu = (ALU*)malloc(sizeof(ALU));
 
     alu->thread = (pthread_t*)malloc(sizeof(pthread_t));
@@ -391,6 +549,7 @@ ALU * ALU_init(char * option, int * result, char * zero, int * input0, int * inp
 	alu->input1 = input1;
 	alu->dependency0 = dependency0;
 	alu->dependency1 = dependency1;
+	alu->dependency2 = dependency2;
 
     pthread_create(alu->thread,NULL,ALU_main,(void*)alu);
 
@@ -404,13 +563,15 @@ typedef struct MEMORY{
 	sem_t * done;
 	sem_t * dependency0;
 	sem_t * dependency1;
+	sem_t * dependency2;
+	sem_t * dependency3;
 
 	char * memRead;
 	char * memWrite;
 	int * address;
 	int * writeData;
 	int * output;
-	char * memory;
+	int * memory;
 } MEMORY;
 
 void * MEMORY_main(void * args){
@@ -420,36 +581,44 @@ void * MEMORY_main(void * args){
 
 		sem_guarantee(memory->dependency0);
 		sem_guarantee(memory->dependency1);
+		sem_guarantee(memory->dependency2);
+		sem_guarantee(memory->dependency3);
 
 		if(*(memory->memRead))
-			*(memory->output) = memory->memory[*(memory->address)];
+			*(memory->output) = memory->memory[*(memory->address) >> 2];
 		else if(*(memory->memWrite))
-			memory->memory[*(memory->address)] = *(memory->writeData);
+			memory->memory[*(memory->address) >> 2] = *(memory->writeData);
 
 		sem_post(memory->done);
 	}
 }
 
 MEMORY * MEMORY_init(char * memRead, char * memWrite, int * address, int * writeData,
-					 int * output, sem_t * begin, sem_t * done, sem_t * dependency0,
-					 sem_t * dependency1, int byteCapacity){
+					 int * output, sem_t * dependency0, sem_t * dependency1, sem_t * dependency2, sem_t * dependency3, int wordCapacity){
+						 
 	MEMORY * memory = (MEMORY*)malloc(sizeof(MEMORY));
 	memory->memRead = memRead;
 	memory->memWrite = memWrite;
 	memory->address = address;
 	memory->writeData = writeData;
 	memory->output = output;
-
-	memory->dependency0 = dependency0;
-	memory->dependency1 = dependency1;
-
-	memory->memory = (char*)malloc(sizeof(char) * byteCapacity);
-
+	
+	memory->begin = (sem_t*)malloc(sizeof(sem_t));
+	memory->done = (sem_t*)malloc(sizeof(sem_t));
+	
     sem_init(memory->begin, 0, 0);
     sem_init(memory->done, 0, 0);
-
+	
+	memory->dependency0 = dependency0;
+	memory->dependency1 = dependency1;
+	memory->dependency2 = dependency2;
+	memory->dependency3 = dependency3;
+	
+	memory->memory = (int*)malloc(sizeof(int) * wordCapacity);
+	
+	memory->thread = (pthread_t*)malloc(sizeof(pthread_t));
     pthread_create(memory->thread,NULL,MEMORY_main,(void*)memory);
-
+	
 	return memory;
 }
 
@@ -458,9 +627,10 @@ typedef struct ALU_CONTROL{
 	pthread_t * thread;
 	sem_t * begin;
 	sem_t * done;
-	sem_t * dependency;
+	sem_t * dependency0;
+	sem_t * dependency1;
 	int * input;
-	int * output;
+	char * output;
 	char * option;
 } ALU_CONTROL;
 
@@ -469,35 +639,36 @@ void* ALU_CONTROL_main(void * args){
 	while(1){
 		sem_wait(signals->begin);
 
-		sem_guarantee(signals->dependency);
+		sem_guarantee(signals->dependency0);
+		sem_guarantee(signals->dependency1);
 
 		if(*(signals->option) == 0) {
 			//add
-			*(signals->option) = 2;
+			*(signals->output) = 2;
 		} else if(*(signals->option) == 1) {
 			//subtract
-			*(signals->option) = 6;
+			*(signals->output) = 6;
 		} else {
-			//Use funct field
+			//Use function field
 			switch (*(signals->input)) {
 				case 32:	//add
-					*(signals->option) = 2;
+					*(signals->output) = 2;
 				break;
 
 				case 34:	//subtract
-					*(signals->option) = 6;
+					*(signals->output) = 6;
 				break;
 
 				case 36:	//AND
-					*(signals->option) = 0;
+					*(signals->output) = 0;
 				break;
 
 				case 37:	//OR
-					*(signals->option) = 1;
+					*(signals->output) = 1;
 				break;
 
 				case 42:	//set on less than
-					*(signals->option) = 7;
+					*(signals->output) = 7;
 				break;
 			}
 		}
@@ -506,7 +677,7 @@ void* ALU_CONTROL_main(void * args){
 	}
 }
 
-ALU_CONTROL * ALU_CONTROL_init(int * input, int * output, char * option, sem_t * dependency){
+ALU_CONTROL * ALU_CONTROL_init(int * input, char * output, char * option, sem_t * dependency0, sem_t * dependency1){
 	ALU_CONTROL * sign = (ALU_CONTROL*)malloc(sizeof(ALU_CONTROL));
 
     sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
@@ -522,7 +693,8 @@ ALU_CONTROL * ALU_CONTROL_init(int * input, int * output, char * option, sem_t *
 
 	sign->option = option;
 
-	sign->dependency = dependency;
+	sign->dependency0 = dependency0;
+	sign->dependency1 = dependency1;
 
     pthread_create(sign->thread,NULL,ALU_CONTROL_main,(void*)sign);
 
@@ -604,7 +776,7 @@ void* CONTROL_main(void * args){
 	}
 }
 
-CONTROL * CONTROL_init(int * output, char * option){
+CONTROL * CONTROL_init(char * option, int * output){
 	CONTROL * sign = (CONTROL*)malloc(sizeof(CONTROL));
 
     sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
@@ -619,36 +791,272 @@ CONTROL * CONTROL_init(int * output, char * option){
 
 	sign->option = option;
 
-	sign->currentState = 0;
+	sign->currentState = -1;
 
     pthread_create(sign->thread,NULL,CONTROL_main,(void*)sign);
 
 	return sign;
 }
+
 // ******************************** MAIN **********************************
 int main()
 {
-	char option = 0;
-	int output = 0;
-
-	CONTROL * c = CONTROL_init(&output, &option);
-
+	int i0 = 0;
+	int i4 = 4;
+	int i31 = 31;
+	sem_t sem_done;
+	sem_init(&sem_done, 0, 1);
+	
+	int PCSource = 0;
+	int PCOut = 0;
+	
+	int UCOut = 0;
+	
+	int IROut = 0;
+	
+	int MEMOut = 0;
+	int MEMOutReg = 0;
+	
+	char IROut_26_31 = 0;
+	
+	int IROut_0_15 = 0;
+	int IROut_0_25 = 0;
+	int IROut_11_15 = 0;
+	int IROut_16_20 = 0;
+	int IROut_21_25 = 0;
+	
+	char UCOut_IorD = 0;
+	char UCOut_regWrite = 0;
+	char UCOut_ALUSrcA = 0;
+	char UCOut_ALUSrcB = 0;
+	char UCOut_ALUop = 0;
+	char UCOut_PCSrc = 0;
+	char UCOut_memRead = 0;
+	char UCOut_memWrite = 0;
+	char UCOut_regDst = 0;
+	char UCOut_memToReg = 0;
+	
+	int ALUOut = 0;
+	char ALUOutZero = 0;
+	int ALURegOut = 0;
+	
+	int MEMAddress = 0;
+	
+	int REGISTERSWriteRegister = 0;
+	int REGISTERSWriteData = 0;
+	
+	int REGISTERSOutA = 0;
+	int REGISTERSOutB = 0;
+	
+	int RegAOut = 0;
+	int RegBOut = 0;
+	
+	int signExtendOut = 0;
+	int toALUShiftLeftOut = 0;
+	int toPCShiftLeftOut = 0;
+	
+	int ALUMuxAOut = 0;
+	int ALUMuxBOut = 0;
+	
+	char ALUControlOut = 0;
+	
+	REGISTER * PC = REGISTER_init(&PCSource, &PCOut);
+	REGISTER * IR = REGISTER_init(&MEMOut, &IROut);
+	REGISTER * ALUOutReg = REGISTER_init(&ALUOut, &ALURegOut);
+	
+	REGISTER * RegA = REGISTER_init(&REGISTERSOutA, &RegAOut);
+	REGISTER * RegB	= REGISTER_init(&REGISTERSOutB, &RegBOut);
+	
+	REGISTER * MEMDataReg = REGISTER_init(&MEMOut, &MEMOutReg);
+	
+	CONTROL * UC = CONTROL_init(&IROut_26_31, &UCOut);
+	
+	SIGN_SPLIT * IRSplit_26_31 = SIGN_SPLIT_init(&IROut, &IROut_26_31, 26, 31, IR->done);
+	
+	SIGN_BIGSPLIT * IRSplit_0_15 = SIGN_BIGSPLIT_init(&IROut, &IROut_0_15, 0, 15, IR->done);
+	SIGN_BIGSPLIT * IRSplit_0_25 = SIGN_BIGSPLIT_init(&IROut, &IROut_0_25, 0, 25, IR->done);
+	SIGN_BIGSPLIT * IRSplit_11_15 = SIGN_BIGSPLIT_init(&IROut, &IROut_11_15, 11, 15, IR->done);
+	SIGN_BIGSPLIT * IRSplit_16_20 = SIGN_BIGSPLIT_init(&IROut, &IROut_16_20, 16, 20, IR->done);
+	SIGN_BIGSPLIT * IRSplit_21_25 = SIGN_BIGSPLIT_init(&IROut, &IROut_21_25, 21, 25, IR->done);
+	
+	SIGN_SPLIT * UCOutSplit_regDst = SIGN_SPLIT_init(&UCOut, &UCOut_regDst, 0, 1, UC->done);
+	SIGN_SPLIT * UCOutSplit_regWrite = SIGN_SPLIT_init(&UCOut, &UCOut_regWrite, 2, 2, UC->done);
+	SIGN_SPLIT * UCOutSplit_ALUSrcA = SIGN_SPLIT_init(&UCOut, &UCOut_ALUSrcA, 3, 3, UC->done);
+	SIGN_SPLIT * UCOutSplit_ALUSrcB = SIGN_SPLIT_init(&UCOut, &UCOut_ALUSrcB, 4, 5, UC->done);
+	SIGN_SPLIT * UCOutSplit_ALUop = SIGN_SPLIT_init(&UCOut, &UCOut_ALUop, 6, 7, UC->done);
+	SIGN_SPLIT * UCOutSplit_PCSrc = SIGN_SPLIT_init(&UCOut, &UCOut_PCSrc, 8, 9, UC->done);
+	SIGN_SPLIT * UCOutSplit_IorD = SIGN_SPLIT_init(&UCOut, &UCOut_IorD, 12, 12, UC->done);
+	SIGN_SPLIT * UCOutSplit_memRead = SIGN_SPLIT_init(&UCOut, &UCOut_memRead, 13, 13, UC->done);
+	SIGN_SPLIT * UCOutSplit_memWrite = SIGN_SPLIT_init(&UCOut, &UCOut_memWrite, 14, 14, UC->done);
+	SIGN_SPLIT * UCOutSplit_memToReg = SIGN_SPLIT_init(&UCOut, &UCOut_memToReg, 17, 18, UC->done);
+	
+	
+	MUX_1bit * memoryAddressMux = MUX_1bit_init(&UCOut_IorD, &MEMAddress, &PCOut, &ALURegOut, PC->done, ALUOutReg->done, UCOutSplit_IorD->done);
+	
+	
+	MEMORY * memory = MEMORY_init(&UCOut_memRead, &UCOut_memWrite, &MEMAddress, &RegBOut, &MEMOut, 
+									memoryAddressMux->done, RegB->done, UCOutSplit_memWrite->done, UCOutSplit_memRead->done, 1000000);
+	
+	
+	MUX_2bits * registersWriteRegisterMux = MUX_2bits_init(&UCOut_regDst, &REGISTERSWriteRegister, &IROut_16_20, &IROut_11_15, &i31, &i0,
+														   IRSplit_16_20->done, IRSplit_11_15->done, &sem_done, &sem_done, UCOutSplit_regDst->done);
+														   
+	
+	MUX_2bits * registersWriteDataMux = MUX_2bits_init(&UCOut_memToReg, &REGISTERSWriteData, &ALURegOut, &MEMOutReg, &PCOut, &i0,
+														   ALUOutReg->done, MEMDataReg->done, PC->done, &sem_done, UCOutSplit_memToReg->done);
+	
+	SIGN_EXTEND * signExtend = SIGN_EXTEND_init(&IROut_0_15, &signExtendOut, IRSplit_0_15->done);
+	SHIFT_LEFT * toALUShiftLeft = SHIFT_LEFT_init(&signExtendOut, &toALUShiftLeftOut, 2, signExtend->done);
+	SHIFT_LEFT * toPCShiftLeft = SHIFT_LEFT_init(&IROut_0_25, &toPCShiftLeftOut, 2, IRSplit_0_25->done);
+	
+	MUX_1bit * ALUMuxA = MUX_1bit_init(&UCOut_ALUSrcA, &ALUMuxAOut, &PCOut, &RegAOut, PC->done, RegA->done, UCOutSplit_ALUSrcA->done);
+	MUX_2bits * ALUMuxB = MUX_2bits_init(&UCOut_ALUSrcB, &ALUMuxBOut, &RegBOut, &i4, &signExtendOut, &toALUShiftLeftOut,
+							RegB->done, &sem_done, signExtend->done, toALUShiftLeft->done, UCOutSplit_ALUSrcB->done);
+							
+	ALU_CONTROL * ALUControl = ALU_CONTROL_init(&IROut_0_15, &ALUControlOut, &UCOut_ALUop, IRSplit_0_15->done, UCOutSplit_ALUop->done);
+	ALU * ALU = ALU_init(&ALUControlOut, &ALUOut, &ALUOutZero, &ALUMuxAOut, &ALUMuxBOut, ALUMuxA->done, ALUMuxB->done, ALUControl->done);
+	
+	MUX_2bits * toPCMux = MUX_2bits_init(&UCOut_PCSrc, &PCSource, &ALUOut, &ALURegOut, &toPCShiftLeftOut, &RegAOut,
+											ALU->done, ALUOutReg->done, toPCShiftLeft->done, UCOutSplit_PCSrc->done, RegA->done);
+	
+	REGISTERS * registers = REGISTERS_init(&IROut_21_25, &IROut_16_20, &REGISTERSWriteRegister, &REGISTERSWriteData, 
+											&REGISTERSOutA, &REGISTERSOutB, &UCOut_regWrite,
+											IRSplit_21_25->done, IRSplit_16_20->done, registersWriteRegisterMux->done, registersWriteDataMux->done, UCOutSplit_regWrite->done);
+	
+	
+	memory->memory[0] = 0b00100000000000000000000000000000;
+	memory->memory[1] = 0b01000000000000000000000000000000;
+	
+	
 	while(1){
-		option=0;
-		for(int i = 0; i < 6; i++){
-			int x;
-			scanf("%d", &x);
-			option <<= 1;
-			option |= x;
-
+		printf("PC: %d\n", PCOut);
+		
+		// Compute logic
+		sem_post(UC->begin);
+		sem_post(IRSplit_26_31->begin);
+		sem_post(IRSplit_0_15->begin);
+		sem_post(IRSplit_0_25->begin);
+		sem_post(IRSplit_11_15->begin);
+		sem_post(IRSplit_16_20->begin);
+		sem_post(IRSplit_21_25->begin);
+		sem_post(UCOutSplit_regDst->begin);
+		sem_post(UCOutSplit_regWrite->begin);
+		sem_post(UCOutSplit_ALUSrcA->begin);
+		sem_post(UCOutSplit_ALUSrcB->begin);
+		sem_post(UCOutSplit_ALUop->begin);
+		sem_post(UCOutSplit_PCSrc->begin);
+		sem_post(UCOutSplit_IorD->begin);
+		sem_post(UCOutSplit_memRead->begin);
+		sem_post(UCOutSplit_memWrite->begin);
+		sem_post(UCOutSplit_memToReg->begin);
+		sem_post(memoryAddressMux->begin);
+		sem_post(memory->begin);
+		sem_post(registersWriteRegisterMux->begin);
+		sem_post(registersWriteDataMux->begin);
+		sem_post(signExtend->begin);
+		sem_post(toALUShiftLeft->begin);
+		sem_post(toPCShiftLeft->begin);
+		sem_post(ALUMuxA->begin);
+		sem_post(ALUMuxB->begin);
+		sem_post(ALUControl->begin);
+		sem_post(ALU->begin);
+		sem_post(toPCMux->begin);
+		sem_post(registers->begin);
+		
+		sem_guarantee(UC->done);
+		sem_guarantee(IRSplit_26_31->done);
+		sem_guarantee(IRSplit_0_15->done);
+		sem_guarantee(IRSplit_0_25->done);
+		sem_guarantee(IRSplit_11_15->done);
+		sem_guarantee(IRSplit_16_20->done);
+		sem_guarantee(IRSplit_21_25->done);
+		sem_guarantee(UCOutSplit_regDst->done);
+		sem_guarantee(UCOutSplit_regWrite->done);
+		sem_guarantee(UCOutSplit_ALUSrcA->done);
+		sem_guarantee(UCOutSplit_ALUSrcB->done);
+		sem_guarantee(UCOutSplit_ALUop->done);
+		sem_guarantee(UCOutSplit_PCSrc->done);
+		sem_guarantee(UCOutSplit_IorD->done);
+		sem_guarantee(UCOutSplit_memRead->done);
+		sem_guarantee(UCOutSplit_memWrite->done);
+		sem_guarantee(UCOutSplit_memToReg->done);
+		sem_guarantee(memoryAddressMux->done);
+		sem_guarantee(memory->done);
+		sem_guarantee(registersWriteRegisterMux->done);
+		sem_guarantee(registersWriteDataMux->done);
+		sem_guarantee(signExtend->done);
+		sem_guarantee(toALUShiftLeft->done);
+		sem_guarantee(toPCShiftLeft->done);
+		sem_guarantee(ALUMuxA->done);
+		sem_guarantee(ALUMuxB->done);
+		sem_guarantee(ALUControl->done);
+		sem_guarantee(ALU->done);
+		sem_guarantee(toPCMux->done);
+		sem_guarantee(registers->done);
+		
+		// Write registers
+		if(pc_write(UCOut, ALUOutZero)){
+			sem_wait(PC->done);
+			sem_post(PC->begin);
 		}
-			sem_post(c->begin);
-
-		sem_wait(c->done);
-	  for(int i=0; i < 32; i++){
-			printf("%d", output%2);
-			output >>= 1;
+		if(ir_write(UCOut)){
+			sem_wait(IR->done);
+			sem_post(IR->begin);
 		}
+		
+		
+		sem_wait(ALUOutReg->done);
+		sem_wait(RegA->done);
+		sem_wait(RegB->done);
+		sem_wait(MEMDataReg->done);
+		
+		sem_post(ALUOutReg->begin);
+		sem_post(RegA->begin);
+		sem_post(RegB->begin);
+		sem_post(MEMDataReg->begin);
+		
+		sem_guarantee(ALUOutReg->done);
+		sem_guarantee(RegA->done);
+		sem_guarantee(RegB->done);
+		sem_guarantee(MEMDataReg->done);
+		
+		if(pc_write(UCOut, ALUOutZero))
+			sem_guarantee(PC->done);
+		if(ir_write(UCOut))
+			sem_guarantee(IR->done);
+		
+		sem_wait(UC->done);
+		sem_wait(IRSplit_26_31->done);
+		sem_wait(IRSplit_0_15->done);
+		sem_wait(IRSplit_0_25->done);
+		sem_wait(IRSplit_11_15->done);
+		sem_wait(IRSplit_16_20->done);
+		sem_wait(IRSplit_21_25->done);
+		sem_wait(UCOutSplit_regDst->done);
+		sem_wait(UCOutSplit_regWrite->done);
+		sem_wait(UCOutSplit_ALUSrcA->done);
+		sem_wait(UCOutSplit_ALUSrcB->done);
+		sem_wait(UCOutSplit_ALUop->done);
+		sem_wait(UCOutSplit_PCSrc->done);
+		sem_wait(UCOutSplit_IorD->done);
+		sem_wait(UCOutSplit_memRead->done);
+		sem_wait(UCOutSplit_memWrite->done);
+		sem_wait(UCOutSplit_memToReg->done);
+		sem_wait(memoryAddressMux->done);
+		sem_wait(memory->done);
+		sem_wait(registersWriteRegisterMux->done);
+		sem_wait(registersWriteDataMux->done);
+		sem_wait(signExtend->done);
+		sem_wait(toALUShiftLeft->done);
+		sem_wait(toPCShiftLeft->done);
+		sem_wait(ALUMuxA->done);
+		sem_wait(ALUMuxB->done);
+		sem_wait(ALUControl->done);
+		sem_wait(ALU->done);
+		sem_wait(toPCMux->done);
+		sem_wait(registers->done);
+		
+		sleep(1);
 	}
 
     return 0;
