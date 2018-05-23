@@ -463,6 +463,8 @@ REGISTERS * REGISTERS_init(int * readRegister1, int * readRegister2, int * write
 	registers->dependency4 = dependency4;
 
 	registers->registers = (int*)malloc(sizeof(int) * 32);
+	registers->registers[0] = 0;
+	
 	registers->begin = (sem_t*)malloc(sizeof(sem_t));
 	registers->done = (sem_t*)malloc(sizeof(sem_t));
     sem_init(registers->begin, 0, 0);
@@ -571,7 +573,7 @@ typedef struct MEMORY{
 	int * address;
 	int * writeData;
 	int * output;
-	int * memory;
+	unsigned char * memory;
 } MEMORY;
 
 void * MEMORY_main(void * args){
@@ -584,17 +586,29 @@ void * MEMORY_main(void * args){
 		sem_guarantee(memory->dependency2);
 		sem_guarantee(memory->dependency3);
 
-		if(*(memory->memRead))
-			*(memory->output) = memory->memory[*(memory->address) >> 2];
-		else if(*(memory->memWrite))
-			memory->memory[*(memory->address) >> 2] = *(memory->writeData);
+		if(*(memory->memRead)){
+			*(memory->output) = memory->memory[*(memory->address)];
+			*(memory->output) |= memory->memory[*(memory->address) + 1] << 8;
+			*(memory->output) |= memory->memory[*(memory->address) + 2] << 16;
+			*(memory->output) |= memory->memory[*(memory->address) + 3] << 24;
+			
+			printf("MEM READ %d = %d\n", *(memory->address), *(memory->output));
+		}
+		else if(*(memory->memWrite)){
+			memory->memory[*(memory->address)] = *(memory->writeData) & 0xff;
+			memory->memory[*(memory->address) + 1] = (*(memory->writeData) >> 8) & 0xff;
+			memory->memory[*(memory->address) + 2] = (*(memory->writeData) >> 16) & 0xff;
+			memory->memory[*(memory->address) + 3] = (*(memory->writeData) >> 24) & 0xff;
+			
+			printf("MEM WRITE %d = %d\n", *(memory->address), *(memory->writeData));
+		}
 
 		sem_post(memory->done);
 	}
 }
 
 MEMORY * MEMORY_init(char * memRead, char * memWrite, int * address, int * writeData,
-					 int * output, sem_t * dependency0, sem_t * dependency1, sem_t * dependency2, sem_t * dependency3, int wordCapacity){
+					 int * output, sem_t * dependency0, sem_t * dependency1, sem_t * dependency2, sem_t * dependency3, int byteCapacity){
 						 
 	MEMORY * memory = (MEMORY*)malloc(sizeof(MEMORY));
 	memory->memRead = memRead;
@@ -614,7 +628,7 @@ MEMORY * MEMORY_init(char * memRead, char * memWrite, int * address, int * write
 	memory->dependency2 = dependency2;
 	memory->dependency3 = dependency3;
 	
-	memory->memory = (int*)malloc(sizeof(int) * wordCapacity);
+	memory->memory = (unsigned char*)malloc(sizeof(unsigned char) * byteCapacity);
 	
 	memory->thread = (pthread_t*)malloc(sizeof(pthread_t));
     pthread_create(memory->thread,NULL,MEMORY_main,(void*)memory);
@@ -648,6 +662,9 @@ void* ALU_CONTROL_main(void * args){
 		} else if(*(signals->option) == 1) {
 			//subtract
 			*(signals->output) = 6;
+		}  else if(*(signals->option) == 2) {
+			//subtract
+			*(signals->output) = 0;
 		} else {
 			//Use function field
 			switch (*(signals->input)) {
@@ -720,7 +737,7 @@ void* CONTROL_main(void * args){
 		char s = signals->currentState;
 		char op = *(signals->option);
 		signals->currentState = 0;
-
+		
 		#define	JUMP 0b000010
 		#define JR 0b010100
 		#define JAL 0b000011
@@ -733,8 +750,6 @@ void* CONTROL_main(void * args){
 		#define BEQ 0b000100
 		#define BNE 0b000101
 
-		printf("op = %d\n", (int)op);
-
 		signals->currentState |= ( (s==0) | ((s==1) & ( (op == JUMP)|(op == JR)|(op==JALR) )) | (s==2) | (s==6) | (s==10) );
 
 		signals->currentState |= ( ( (s==1) & ( (op==LW)|(op==SW)|(op==ADDI)|(op==RTYPE)|(op==ANDI)|(op==JAL)|(op==JALR) ) ) |
@@ -745,11 +760,7 @@ void* CONTROL_main(void * args){
 
 		signals->currentState |= ( ( (s==1) & ( (op==BEQ)|(op==JUMP)|(op==ANDI)|(op==BNE)|(op==JR)|(op==JAL)|(op==JALR) ) ) |
 	 															((s==2) & (op==ADDI)) | (s==10) ) << 3;
-
-		printf("estado anterior= %d\n", (int)s);
 		s = signals->currentState;
-
-		printf("estado atual= %d\n", (int)s);
 
 		*(signals->output) = 0;
 		*(signals->output) |= (s==7);	//regDST0
@@ -771,7 +782,9 @@ void* CONTROL_main(void * args){
 		*(signals->output) |= (s==0) << 16;	//IRWrite
 		*(signals->output) |= (s==4) << 17;	//MemtoReg0
 		*(signals->output) |= ((s==14) | (s==15)) << 18;	//MemtoReg1
-
+		
+		printf("OP: %d, STATE: %d\n", (int)op, (int)signals->currentState);
+		
 		sem_post(signals->done);
 	}
 }
@@ -798,9 +811,71 @@ CONTROL * CONTROL_init(char * option, int * output){
 	return sign;
 }
 
+// ******************************* PRINTS **********************************
+
+void print_binary(int val){
+	for(int i = 31; i >= 0; i--)
+		printf("%d", (val >> i) & 1);
+}
+
+void print_state(int pc, int ir, int mdr, int a, int b, int aluOut, int control, REGISTERS * registers, MEMORY * memory){
+	printf("PC=%d\tIR=%u\tMDR=%d\n", pc, (unsigned int)ir, mdr);
+	printf("A=%d\tB=%d\tAluOut=%d\n", a, b, aluOut);
+	printf("Controle=");
+	print_binary(control);
+	printf("\n\n");
+	printf("Banco de registradores\n");
+	printf("R00(r0)=%d\tR08(t0)=%d\tR16(s0)=%d\tR24(t8)=%d\n", registers->registers[0], registers->registers[8], registers->registers[16], registers->registers[24]);
+	printf("R01(at)=%d\tR09(t1)=%d\tR17(s1)=%d\tR25(t9)=%d\n", registers->registers[1], registers->registers[9], registers->registers[17], registers->registers[25]);
+	printf("R02(v0)=%d\tR10(t2)=%d\tR18(s2)=%d\tR26(k0)=%d\n", registers->registers[2], registers->registers[10], registers->registers[18], registers->registers[26]);
+	printf("R03(v1)=%d\tR11(t3)=%d\tR19(s3)=%d\tR27(k1)=%d\n", registers->registers[3], registers->registers[11], registers->registers[19], registers->registers[27]);
+	printf("R04(a0)=%d\tR12(t4)=%d\tR20(s4)=%d\tR28(gp)=%d\n", registers->registers[4], registers->registers[12], registers->registers[20], registers->registers[28]);
+	printf("R05(a1)=%d\tR13(t5)=%d\tR21(s5)=%d\tR29(sp)=%d\n", registers->registers[5], registers->registers[13], registers->registers[21], registers->registers[29]);
+	printf("R06(a2)=%d\tR14(t6)=%d\tR22(s6)=%d\tR30(s8)=%d\n", registers->registers[6], registers->registers[14], registers->registers[22], registers->registers[30]);
+	printf("R07(a3)=%d\tR15(t7)=%d\tR23(s7)=%d\tR31(ra)=%d\n", registers->registers[7], registers->registers[15], registers->registers[23], registers->registers[31]);
+	
+	printf("\n");
+	printf("Memoria (enderecos a byte)\n");
+	for(int i = 0; i < 32; i++){
+		for(int j = 0; j < 4; j++){
+			printf("[%02d]=%05d\t", i+32*j, memory->memory[i+32*j]);
+		}
+		printf("\n");
+	}
+	printf("*********************************************************************************\n\n");
+}
+
+// ************************** LOAD INSTRUCTIONS ****************************
+
+void load_instructions(unsigned char * memory){
+	unsigned int c;
+	FILE *file;
+	int currPos = 0;
+	file = fopen("code.bin", "r");
+	while(fscanf(file, "%u", &c) != EOF){
+		memory[currPos] = c & 0xFF;
+		memory[currPos+1] = (c >> 8) & 0xFF;
+		memory[currPos+2] = (c >> 16) & 0xFF;
+		memory[currPos+3] = (c >> 24) & 0xFF;
+		
+		printf("Load %d: %d | %d %d %d %d\n", currPos, c, memory[currPos], memory[currPos+1], memory[currPos+2], memory[currPos+3]);
+		
+		currPos += 4;
+	}
+	fclose(file);
+	
+	memory[currPos] = -1;
+	memory[currPos+1] = -1;
+	memory[currPos+2] = -1;
+	memory[currPos+3] = -1;
+	
+	return;
+}
+
 // ******************************** MAIN **********************************
 int main()
 {
+	// Declare signals
 	int i0 = 0;
 	int i4 = 4;
 	int i31 = 31;
@@ -860,6 +935,7 @@ int main()
 	
 	char ALUControlOut = 0;
 	
+	// Initiate blocks
 	REGISTER * PC = REGISTER_init(&PCSource, &PCOut);
 	REGISTER * IR = REGISTER_init(&MEMOut, &IROut);
 	REGISTER * ALUOutReg = REGISTER_init(&ALUOut, &ALURegOut);
@@ -895,7 +971,7 @@ int main()
 	
 	
 	MEMORY * memory = MEMORY_init(&UCOut_memRead, &UCOut_memWrite, &MEMAddress, &RegBOut, &MEMOut, 
-									memoryAddressMux->done, RegB->done, UCOutSplit_memWrite->done, UCOutSplit_memRead->done, 1000000);
+									memoryAddressMux->done, RegB->done, UCOutSplit_memWrite->done, UCOutSplit_memRead->done, 128);
 	
 	
 	MUX_2bits * registersWriteRegisterMux = MUX_2bits_init(&UCOut_regDst, &REGISTERSWriteRegister, &IROut_16_20, &IROut_11_15, &i31, &i0,
@@ -924,12 +1000,12 @@ int main()
 											IRSplit_21_25->done, IRSplit_16_20->done, registersWriteRegisterMux->done, registersWriteDataMux->done, UCOutSplit_regWrite->done);
 	
 	
-	memory->memory[0] = 0b00100000000000000000000000000000;
-	memory->memory[1] = 0b01000000000000000000000000000000;
-	
-	
-	while(1){
-		printf("PC: %d\n", PCOut);
+	// Load instructions
+	load_instructions(memory->memory);
+		
+	// Execution loop
+	while(IROut != -1){		
+		print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
 		
 		// Compute logic
 		sem_post(UC->begin);
@@ -1025,6 +1101,7 @@ int main()
 		if(ir_write(UCOut))
 			sem_guarantee(IR->done);
 		
+		// Reset completion status
 		sem_wait(UC->done);
 		sem_wait(IRSplit_26_31->done);
 		sem_wait(IRSplit_0_15->done);
@@ -1055,8 +1132,6 @@ int main()
 		sem_wait(ALU->done);
 		sem_wait(toPCMux->done);
 		sem_wait(registers->done);
-		
-		sleep(1);
 	}
 
     return 0;
