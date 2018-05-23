@@ -21,3 +21,13 @@
 80 - 816185356  ANDI $a2 $a1 12
 84 - 538443777  ADDI $t8 $zero 1
 88 - 1461649408 JALR $ra $t8 0
+
+01010111111110000000000000000000
+001000ssssstttttiiiiiiiiiiiiiiii
+s = 11000 = $t8
+t = 11111 = $ra
+
+JALR $ra $t8
+jump to ra, store in t8
+
+110010010011000000100010

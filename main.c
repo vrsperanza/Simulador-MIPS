@@ -504,26 +504,32 @@ void * ALU_main(void * args){
 		switch(*(signals->option)){
 			case 0:
 				*(signals->result) = *(signals->input0) & *(signals->input1);
+				printf("%d = %d & %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 1:
 				*(signals->result) = *(signals->input0) | *(signals->input1);
+				printf("%d = %d | %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 2:
 				*(signals->result) = *(signals->input0) + *(signals->input1);
+				printf("%d = %d + %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 6:
 				*(signals->result) = *(signals->input0) - *(signals->input1);
+				printf("%d = %d - %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 7:
 				*(signals->result) = ( *(signals->input0) < *(signals->input1) );
+				printf("%d = %d < %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 12:
 				*(signals->result) = !(*(signals->input0) | *(signals->input1));
+				printf("%d = !%d | %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 		}
 
@@ -643,7 +649,7 @@ typedef struct ALU_CONTROL{
 	sem_t * done;
 	sem_t * dependency0;
 	sem_t * dependency1;
-	int * input;
+	char * input;
 	char * output;
 	char * option;
 } ALU_CONTROL;
@@ -655,19 +661,21 @@ void* ALU_CONTROL_main(void * args){
 
 		sem_guarantee(signals->dependency0);
 		sem_guarantee(signals->dependency1);
-
+		
 		if(*(signals->option) == 0) {
 			//add
 			*(signals->output) = 2;
 		} else if(*(signals->option) == 1) {
 			//subtract
 			*(signals->output) = 6;
-		}  else if(*(signals->option) == 2) {
-			//subtract
-			*(signals->output) = 0;
 		} else {
 			//Use function field
 			switch (*(signals->input)) {
+				
+				case 12:	//AND
+					*(signals->output) = 0;
+				break;
+				
 				case 32:	//add
 					*(signals->output) = 2;
 				break;
@@ -690,11 +698,13 @@ void* ALU_CONTROL_main(void * args){
 			}
 		}
 
+		printf("ALU_CONTROL: %d %d %d\n", *(signals->option), *(signals->input), *(signals->output));
+		
 		sem_post(signals->done);
 	}
 }
 
-ALU_CONTROL * ALU_CONTROL_init(int * input, char * output, char * option, sem_t * dependency0, sem_t * dependency1){
+ALU_CONTROL * ALU_CONTROL_init(char * input, char * output, char * option, sem_t * dependency0, sem_t * dependency1){
 	ALU_CONTROL * sign = (ALU_CONTROL*)malloc(sizeof(ALU_CONTROL));
 
     sign->thread = (pthread_t*)malloc(sizeof(pthread_t));
@@ -893,6 +903,7 @@ int main()
 	int MEMOutReg = 0;
 	
 	char IROut_26_31 = 0;
+	char IROut_0_5 = 0;
 	
 	int IROut_0_15 = 0;
 	int IROut_0_25 = 0;
@@ -948,6 +959,7 @@ int main()
 	CONTROL * UC = CONTROL_init(&IROut_26_31, &UCOut);
 	
 	SIGN_SPLIT * IRSplit_26_31 = SIGN_SPLIT_init(&IROut, &IROut_26_31, 26, 31, IR->done);
+	SIGN_SPLIT * IRSplit_0_5 = SIGN_SPLIT_init(&IROut, &IROut_0_5, 0, 5, IR->done);
 	
 	SIGN_BIGSPLIT * IRSplit_0_15 = SIGN_BIGSPLIT_init(&IROut, &IROut_0_15, 0, 15, IR->done);
 	SIGN_BIGSPLIT * IRSplit_0_25 = SIGN_BIGSPLIT_init(&IROut, &IROut_0_25, 0, 25, IR->done);
@@ -989,7 +1001,7 @@ int main()
 	MUX_2bits * ALUMuxB = MUX_2bits_init(&UCOut_ALUSrcB, &ALUMuxBOut, &RegBOut, &i4, &signExtendOut, &toALUShiftLeftOut,
 							RegB->done, &sem_done, signExtend->done, toALUShiftLeft->done, UCOutSplit_ALUSrcB->done);
 							
-	ALU_CONTROL * ALUControl = ALU_CONTROL_init(&IROut_0_15, &ALUControlOut, &UCOut_ALUop, IRSplit_0_15->done, UCOutSplit_ALUop->done);
+	ALU_CONTROL * ALUControl = ALU_CONTROL_init(&IROut_0_5, &ALUControlOut, &UCOut_ALUop, IRSplit_0_15->done, UCOutSplit_ALUop->done);
 	ALU * ALU = ALU_init(&ALUControlOut, &ALUOut, &ALUOutZero, &ALUMuxAOut, &ALUMuxBOut, ALUMuxA->done, ALUMuxB->done, ALUControl->done);
 	
 	MUX_2bits * toPCMux = MUX_2bits_init(&UCOut_PCSrc, &PCSource, &ALUOut, &ALURegOut, &toPCShiftLeftOut, &RegAOut,
@@ -1002,14 +1014,19 @@ int main()
 	
 	// Load instructions
 	load_instructions(memory->memory);
-		
+	
+	int oldA2 = registers->registers[6];
+	
 	// Execution loop
-	while(IROut != -1){		
-		print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
+	while(IROut != -1){
+		//if(PCOut == 80 || PCOut == 84){
+			print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
+		//}
 		
 		// Compute logic
 		sem_post(UC->begin);
 		sem_post(IRSplit_26_31->begin);
+		sem_post(IRSplit_0_5->begin);
 		sem_post(IRSplit_0_15->begin);
 		sem_post(IRSplit_0_25->begin);
 		sem_post(IRSplit_11_15->begin);
@@ -1041,6 +1058,7 @@ int main()
 		
 		sem_guarantee(UC->done);
 		sem_guarantee(IRSplit_26_31->done);
+		sem_guarantee(IRSplit_0_5->done);
 		sem_guarantee(IRSplit_0_15->done);
 		sem_guarantee(IRSplit_0_25->done);
 		sem_guarantee(IRSplit_11_15->done);
@@ -1104,6 +1122,7 @@ int main()
 		// Reset completion status
 		sem_wait(UC->done);
 		sem_wait(IRSplit_26_31->done);
+		sem_wait(IRSplit_0_5->done);
 		sem_wait(IRSplit_0_15->done);
 		sem_wait(IRSplit_0_25->done);
 		sem_wait(IRSplit_11_15->done);
