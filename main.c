@@ -11,7 +11,8 @@ void sem_guarantee(sem_t * sem){
 }
 
 char pc_write(int UCOut, char ALUZero){
-	return ((UCOut >> 11) & 1) | ( ((UCOut >> 10) & 1) & ( (ALUZero & ((UCOut >> 10) & 1)) | (!ALUZero & !((UCOut >> 10) & 1)) ) );
+	return (((((UCOut >> 15) & 1) & !ALUZero) | (ALUZero & !((UCOut >> 15) & 1))) & ((UCOut >> 10) & 1)) | ((UCOut >> 11) & 1);
+	//return ((UCOut >> 11) & 1) | ( ((UCOut >> 10) & 1) & ( (ALUZero & ((UCOut >> 10) & 1)) | (!ALUZero & !((UCOut >> 10) & 1)) ) );
 }
 
 char ir_write(int UCOut){
@@ -40,7 +41,7 @@ void* SIGN_SPLIT_main(void * args){
 
 		sem_guarantee(signals->dependency);
 
-		*(signals->output) = (*(signals->input) & signals->splitMask) >> signals->splitBegin;
+		*(signals->output) = (*(signals->input) >> signals->splitBegin) & signals->splitMask;
 
 		sem_post(signals->done);
 	}
@@ -66,7 +67,7 @@ SIGN_SPLIT * SIGN_SPLIT_init(int * input, char * output, int splitBegin, int spl
 	sign->splitEnd = splitEnd;
 	sign->splitMask = 0;
 	for(int i = splitBegin; i <= splitEnd; i++)
-		sign->splitMask |= 1 << i;
+		sign->splitMask |= 1 << (i-splitBegin);
 
     pthread_create(sign->thread,NULL,SIGN_SPLIT_main,(void*)sign);
 
@@ -94,7 +95,7 @@ void* SIGN_BIGSPLIT_main(void * args){
 		sem_wait(signals->begin);
 
 		sem_guarantee(signals->dependency);
-		*(signals->output) = (*(signals->input) & signals->splitMask) >> signals->splitBegin;
+		*(signals->output) = (*(signals->input) >> signals->splitBegin) & signals->splitMask;
 
 		sem_post(signals->done);
 	}
@@ -120,7 +121,7 @@ SIGN_BIGSPLIT * SIGN_BIGSPLIT_init(int * input, int * output, int splitBegin, in
 	sign->splitEnd = splitEnd;
 	sign->splitMask = 0;
 	for(int i = splitBegin; i <= splitEnd; i++)
-		sign->splitMask |= 1 << i;
+		sign->splitMask |= 1 << (i-splitBegin);
 
     pthread_create(sign->thread,NULL,SIGN_BIGSPLIT_main,(void*)sign);
 
@@ -593,18 +594,18 @@ void * MEMORY_main(void * args){
 		sem_guarantee(memory->dependency3);
 
 		if(*(memory->memRead)){
-			*(memory->output) = memory->memory[*(memory->address)];
-			*(memory->output) |= memory->memory[*(memory->address) + 1] << 8;
-			*(memory->output) |= memory->memory[*(memory->address) + 2] << 16;
-			*(memory->output) |= memory->memory[*(memory->address) + 3] << 24;
+			*(memory->output) = memory->memory[*(memory->address)] << 24;
+			*(memory->output) |= memory->memory[*(memory->address) + 1] << 16;
+			*(memory->output) |= memory->memory[*(memory->address) + 2] << 8;
+			*(memory->output) |= memory->memory[*(memory->address) + 3];
 
 			printf("MEM READ %d = %d\n", *(memory->address), *(memory->output));
 		}
 		else if(*(memory->memWrite)){
-			memory->memory[*(memory->address)] = *(memory->writeData) & 0xff;
-			memory->memory[*(memory->address) + 1] = (*(memory->writeData) >> 8) & 0xff;
-			memory->memory[*(memory->address) + 2] = (*(memory->writeData) >> 16) & 0xff;
-			memory->memory[*(memory->address) + 3] = (*(memory->writeData) >> 24) & 0xff;
+			memory->memory[*(memory->address)] = (*(memory->writeData) >> 24) & 0xff;
+			memory->memory[*(memory->address) + 1] = (*(memory->writeData) >> 16) & 0xff;
+			memory->memory[*(memory->address) + 2] = (*(memory->writeData) >> 8) & 0xff;
+			memory->memory[*(memory->address) + 3] = (*(memory->writeData)) & 0xff;
 
 			printf("MEM WRITE %d = %d\n", *(memory->address), *(memory->writeData));
 		}
@@ -746,6 +747,14 @@ void* CONTROL_main(void * args){
 		//"s" e "op" são variáveis utilizadas com o único propósito de facilitar a visualização e, consequentemente, a correção do trabalho
 		char s = signals->currentState;
 		char op = *(signals->option);
+		
+		printf("OP IN: %d ", (int)op);
+		for(int i = 7; i >= 0; i--)
+			printf("%d", (int)(op >> i & 1));
+		printf("\n");
+		
+		printf("STATE IN: %d\n", (int)signals->currentState);
+		
 		signals->currentState = 0;
 
 		#define	JUMP 0b000010
@@ -863,10 +872,10 @@ void load_instructions(unsigned char * memory){
 	int currPos = 0;
 	file = fopen("code.bin", "r");
 	while(fscanf(file, "%u", &c) != EOF){
-		memory[currPos] = c & 0xFF;
-		memory[currPos+1] = (c >> 8) & 0xFF;
-		memory[currPos+2] = (c >> 16) & 0xFF;
-		memory[currPos+3] = (c >> 24) & 0xFF;
+		memory[currPos] = (c >> 24) & 0xFF;
+		memory[currPos+1] = (c >> 16) & 0xFF;
+		memory[currPos+2] = (c >> 8) & 0xFF;
+		memory[currPos+3] = c & 0xFF;
 
 		printf("Load %d: %d | %d %d %d %d\n", currPos, c, memory[currPos], memory[currPos+1], memory[currPos+2], memory[currPos+3]);
 
@@ -1019,9 +1028,8 @@ int main()
 
 	// Execution loop
 	while(IROut != -1){
-		//if(PCOut == 80 || PCOut == 84){
-			print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
-		//}
+		print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
+		
 
 		// Compute logic
 		sem_post(UC->begin);
