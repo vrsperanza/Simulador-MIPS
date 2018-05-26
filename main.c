@@ -662,7 +662,26 @@ void* ALU_CONTROL_main(void * args){
 
 		sem_guarantee(signals->dependency0);
 		sem_guarantee(signals->dependency1);
+		
+		char op0 = *(signals->option) & 0b01;
+		char op1 = *(signals->option) & 0b10;
+		char func = *(signals->input) & 0b001111;
+		
+        	// Inicializa como 0
+		*(signals->output) = 0;
+		
+		// Primeiro bit
+		*(signals->output) |= ( (op1 == 0b10) & ( (func == 0b000101) | (func == 0b001010) ) );
 
+		// Segundo bit
+		*(signals->output) |= ( ((op0 == 0b00) & (op1 == 0b00)) | (op0 == 0b01) | ((op1 == 0b10) & 
+		((func == 0b000000) | (func == 0b000010) | (func == 0b001010)))) << 1;
+
+		// Terceiro bit
+		*(signals->output) |= ( (op0 == 0b01) | ( (op1 == 0b10) & ( (func == 0b000010) | (func == 0b001010)))) << 2;
+        
+
+		/*
 		if(*(signals->option) == 0) {
 			//add
 			*(signals->output) = 2;
@@ -698,6 +717,7 @@ void* ALU_CONTROL_main(void * args){
 				break;
 			}
 		}
+		*/
 
 		printf("ALU_CONTROL: %d %d %d\n", *(signals->option), *(signals->input), *(signals->output));
 
