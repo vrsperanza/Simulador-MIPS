@@ -1116,6 +1116,7 @@ int main()
 		sem_guarantee(toPCMux->done);
 		sem_guarantee(registers->done);
 
+		
 		if(IROut == -1)
 			break;
 		
@@ -1128,7 +1129,6 @@ int main()
 			sem_wait(IR->done);
 			sem_post(IR->begin);
 		}
-
 
 		sem_wait(ALUOutReg->done);
 		sem_wait(RegA->done);
@@ -1145,11 +1145,9 @@ int main()
 		sem_guarantee(RegB->done);
 		sem_guarantee(MEMDataReg->done);
 
-		if(pc_write(UCOut, ALUOutZero))
-			sem_guarantee(PC->done);
-		if(ir_write(UCOut))
-			sem_guarantee(IR->done);
-
+		sem_guarantee(PC->done);
+		sem_guarantee(IR->done);
+		
 		// Reset completion status
 		sem_wait(UC->done);
 		sem_wait(IRSplit_26_31->done);
