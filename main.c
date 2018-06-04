@@ -577,6 +577,7 @@ typedef struct MEMORY{
 
 	char * memRead;
 	char * memWrite;
+	char * exit;
 	int * address;
 	int * writeData;
 	int * output;
@@ -788,7 +789,7 @@ void* CONTROL_main(void * args){
 		#define ANDI 0b001100
 		#define BEQ 0b000100
 		#define BNE 0b000101
-
+		
 		signals->currentState |= ( (s==0) | ((s==1) & ( (op == JUMP)|(op == JR)|(op==JALR) )) | (s==2) | (s==6) | (s==10) );
 
 		signals->currentState |= ( ( (s==1) & ( (op==LW)|(op==SW)|(op==ADDI)|(op==RTYPE)|(op==ANDI)|(op==JAL)|(op==JALR) ) ) |
@@ -838,7 +839,7 @@ CONTROL * CONTROL_init(char * option, int * output){
 
     sem_init(sign->begin, 0, 0);
     sem_init(sign->done, 0, 0);
-
+	
 	sign->output = output;
 
 	sign->option = option;
@@ -858,7 +859,7 @@ void print_binary(int val){
 }
 
 void print_state(int pc, int ir, int mdr, int a, int b, int aluOut, int control, REGISTERS * registers, MEMORY * memory){
-	printf("PC=%d\tIR=%u\tMDR=%d\n", pc, (unsigned int)ir, mdr);
+	printf("PC=%d\tIR=%u\tMDR=%u\n", pc, (unsigned int)ir, (unsigned int)mdr);
 	printf("A=%d\tB=%d\tAluOut=%d\n", a, b, aluOut);
 	printf("Controle=");
 	print_binary(control);
@@ -902,12 +903,6 @@ void load_instructions(unsigned char * memory){
 		currPos += 4;
 	}
 	fclose(file);
-
-	memory[currPos+3] = -1;
-	memory[currPos+2] = -1;
-	memory[currPos+1] = -1;
-	memory[currPos] = -1;
-
 	return;
 }
 
@@ -950,7 +945,7 @@ int main()
 	char UCOut_memWrite = 0;
 	char UCOut_regDst = 0;
 	char UCOut_memToReg = 0;
-
+	
 	int ALUOut = 0;
 	char ALUOutZero = 0;
 	int ALURegOut = 0;
@@ -1007,7 +1002,6 @@ int main()
 	SIGN_SPLIT * UCOutSplit_memWrite = SIGN_SPLIT_init(&UCOut, &UCOut_memWrite, 14, 14, UC->done);
 	SIGN_SPLIT * UCOutSplit_memToReg = SIGN_SPLIT_init(&UCOut, &UCOut_memToReg, 17, 18, UC->done);
 
-
 	MUX_1bit * memoryAddressMux = MUX_1bit_init(&UCOut_IorD, &MEMAddress, &PCOut, &ALURegOut, PC->done, ALUOutReg->done, UCOutSplit_IorD->done);
 
 
@@ -1047,10 +1041,7 @@ int main()
 	int oldA2 = registers->registers[6];
 
 	// Execution loop
-	while(1){
-		print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
-		
-
+	while(IROut != -1){		
 		// Compute logic
 		sem_post(UC->begin);
 		sem_post(IRSplit_26_31->begin);
@@ -1115,16 +1106,14 @@ int main()
 		sem_guarantee(ALU->done);
 		sem_guarantee(toPCMux->done);
 		sem_guarantee(registers->done);
-
 		
-		if(IROut == -1)
-			break;
 		
 		// Write registers
 		if(pc_write(UCOut, ALUOutZero)){
 			sem_wait(PC->done);
 			sem_post(PC->begin);
 		}
+		
 		if(ir_write(UCOut)){
 			sem_wait(IR->done);
 			sem_post(IR->begin);
@@ -1180,7 +1169,9 @@ int main()
 		sem_wait(ALU->done);
 		sem_wait(toPCMux->done);
 		sem_wait(registers->done);
+		print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALURegOut, UCOut, registers, memory);
 	}
+	print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALURegOut, UCOut, registers, memory);
 
     return 0;
 }
