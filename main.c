@@ -594,18 +594,18 @@ void * MEMORY_main(void * args){
 		sem_guarantee(memory->dependency3);
 
 		if(*(memory->memRead)){
-			*(memory->output) = memory->memory[*(memory->address)] << 24;
-			*(memory->output) |= memory->memory[*(memory->address) + 1] << 16;
-			*(memory->output) |= memory->memory[*(memory->address) + 2] << 8;
-			*(memory->output) |= memory->memory[*(memory->address) + 3];
+			*(memory->output) = memory->memory[*(memory->address) + 3] << 24;
+			*(memory->output) |= memory->memory[*(memory->address) + 2] << 16;
+			*(memory->output) |= memory->memory[*(memory->address) + 1] << 8;
+			*(memory->output) |= memory->memory[*(memory->address)];
 
 			printf("MEM READ %d = %d\n", *(memory->address), *(memory->output));
 		}
 		else if(*(memory->memWrite)){
-			memory->memory[*(memory->address)] = (*(memory->writeData) >> 24) & 0xff;
-			memory->memory[*(memory->address) + 1] = (*(memory->writeData) >> 16) & 0xff;
-			memory->memory[*(memory->address) + 2] = (*(memory->writeData) >> 8) & 0xff;
-			memory->memory[*(memory->address) + 3] = (*(memory->writeData)) & 0xff;
+			memory->memory[*(memory->address) + 3] = (*(memory->writeData) >> 24) & 0xff;
+			memory->memory[*(memory->address) + 2] = (*(memory->writeData) >> 16) & 0xff;
+			memory->memory[*(memory->address) + 1] = (*(memory->writeData) >> 8) & 0xff;
+			memory->memory[*(memory->address)] = (*(memory->writeData)) & 0xff;
 
 			printf("MEM WRITE %d = %d\n", *(memory->address), *(memory->writeData));
 		}
@@ -892,10 +892,10 @@ void load_instructions(unsigned char * memory){
 	int currPos = 0;
 	file = fopen("code.bin", "r");
 	while(fscanf(file, "%u", &c) != EOF){
-		memory[currPos] = (c >> 24) & 0xFF;
-		memory[currPos+1] = (c >> 16) & 0xFF;
-		memory[currPos+2] = (c >> 8) & 0xFF;
-		memory[currPos+3] = c & 0xFF;
+		memory[currPos+3] = (c >> 24) & 0xFF;
+		memory[currPos+2] = (c >> 16) & 0xFF;
+		memory[currPos+1] = (c >> 8) & 0xFF;
+		memory[currPos] = c & 0xFF;
 
 		printf("Load %d: %d | %d %d %d %d\n", currPos, c, memory[currPos], memory[currPos+1], memory[currPos+2], memory[currPos+3]);
 
@@ -903,10 +903,10 @@ void load_instructions(unsigned char * memory){
 	}
 	fclose(file);
 
-	memory[currPos] = -1;
-	memory[currPos+1] = -1;
-	memory[currPos+2] = -1;
 	memory[currPos+3] = -1;
+	memory[currPos+2] = -1;
+	memory[currPos+1] = -1;
+	memory[currPos] = -1;
 
 	return;
 }
