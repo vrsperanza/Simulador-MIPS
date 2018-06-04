@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+int ERRO = 0;	//variavel para identificar erros, utilizada para a robustez do simulador
+
 // ************************** HELPER FUNCTIONS ***************************
 void sem_guarantee(sem_t * sem){
 	sem_wait(sem);
@@ -12,7 +14,6 @@ void sem_guarantee(sem_t * sem){
 
 char pc_write(int UCOut, char ALUZero){
 	return (((((UCOut >> 15) & 1) & !ALUZero) | (ALUZero & !((UCOut >> 15) & 1))) & ((UCOut >> 10) & 1)) | ((UCOut >> 11) & 1);
-	//return ((UCOut >> 11) & 1) | ( ((UCOut >> 10) & 1) & ( (ALUZero & ((UCOut >> 10) & 1)) | (!ALUZero & !((UCOut >> 10) & 1)) ) );
 }
 
 char ir_write(int UCOut){
@@ -433,6 +434,13 @@ void * REGISTERS_main(void * args){
 		sem_guarantee(registers->dependency3);
 		sem_guarantee(registers->dependency4);
 
+		//Tratamento de erro
+		if (*(registers->readRegister1) > 31 || *(registers->readRegister1) < 0 || *(registers->readRegister2) > 31 ||
+				*(registers->readRegister2) < 0 || *(registers->writeRegister) > 31 || *(registers->writeRegister) < 0) {
+				printf("Término devido a acesso inválido ao Banco de Registradores.\n");
+				ERRO = 1;
+		}
+
 		if(*(registers->regWrite)){
 			registers->registers[*(registers->writeRegister)] = *(registers->writeData);
 		}
@@ -505,32 +513,26 @@ void * ALU_main(void * args){
 		switch(*(signals->option)){
 			case 0:
 				*(signals->result) = *(signals->input0) & *(signals->input1);
-				printf("%d = %d & %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 1:
 				*(signals->result) = *(signals->input0) | *(signals->input1);
-				printf("%d = %d | %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 2:
 				*(signals->result) = *(signals->input0) + *(signals->input1);
-				printf("%d = %d + %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 6:
 				*(signals->result) = *(signals->input0) - *(signals->input1);
-				printf("%d = %d - %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 7:
 				*(signals->result) = ( *(signals->input0) < *(signals->input1) );
-				printf("%d = %d < %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 
 			case 12:
 				*(signals->result) = !(*(signals->input0) | *(signals->input1));
-				printf("%d = !%d | %d\n", *(signals->result), *(signals->input0), *(signals->input1));
 			break;
 		}
 
@@ -593,21 +595,23 @@ void * MEMORY_main(void * args){
 		sem_guarantee(memory->dependency2);
 		sem_guarantee(memory->dependency3);
 
+		//Tratamento de erro
+		if (*(memory->address) < 0 || *(memory->address) > 127) {
+			printf("Término devido a acesso inválido de memória.\n");
+			ERRO = 1;
+		}
+
 		if(*(memory->memRead)){
 			*(memory->output) = memory->memory[*(memory->address)] << 24;
 			*(memory->output) |= memory->memory[*(memory->address) + 1] << 16;
 			*(memory->output) |= memory->memory[*(memory->address) + 2] << 8;
 			*(memory->output) |= memory->memory[*(memory->address) + 3];
-
-			printf("MEM READ %d = %d\n", *(memory->address), *(memory->output));
 		}
 		else if(*(memory->memWrite)){
 			memory->memory[*(memory->address)] = (*(memory->writeData) >> 24) & 0xff;
 			memory->memory[*(memory->address) + 1] = (*(memory->writeData) >> 16) & 0xff;
 			memory->memory[*(memory->address) + 2] = (*(memory->writeData) >> 8) & 0xff;
 			memory->memory[*(memory->address) + 3] = (*(memory->writeData)) & 0xff;
-
-			printf("MEM WRITE %d = %d\n", *(memory->address), *(memory->writeData));
 		}
 
 		sem_post(memory->done);
@@ -662,64 +666,29 @@ void* ALU_CONTROL_main(void * args){
 
 		sem_guarantee(signals->dependency0);
 		sem_guarantee(signals->dependency1);
-		
+
 		char op0 = *(signals->option) & 0b01;
-		char op1 = *(signals->option) & 0b10;
-		char func = *(signals->input) & 0b001111;
-		
-        	// Inicializa como 0
-		*(signals->output) = 0;
-		
-		// Primeiro bit
-		*(signals->output) |= ( (op1 == 0b10) & ( (func == 0b000101) | (func == 0b001010) ) );
+    char op1 = *(signals->option) & 0b10;
+    char func = *(signals->input) & 0b001111;
 
-		// Segundo bit
-		*(signals->output) |= ( ((op0 == 0b00) & (op1 == 0b00)) | (op0 == 0b01) | ((op1 == 0b10) & 
-		((func == 0b000000) | (func == 0b000010) | (func == 0b001010)))) << 1;
-
-		// Terceiro bit
-		*(signals->output) |= ( (op0 == 0b01) | ( (op1 == 0b10) & ( (func == 0b000010) | (func == 0b001010)))) << 2;
-        
-
-		/*
-		if(*(signals->option) == 0) {
-			//add
-			*(signals->output) = 2;
-		} else if(*(signals->option) == 1) {
-			//subtract
-			*(signals->output) = 6;
-		} else {
-			//Use function field
-			switch (*(signals->input)) {
-
-				case 12:	//AND
-					*(signals->output) = 0;
-				break;
-
-				case 32:	//add
-					*(signals->output) = 2;
-				break;
-
-				case 34:	//subtract
-					*(signals->output) = 6;
-				break;
-
-				case 36:	//AND
-					*(signals->output) = 0;
-				break;
-
-				case 37:	//OR
-					*(signals->output) = 1;
-				break;
-
-				case 42:	//set on less than
-					*(signals->output) = 7;
-				break;
-			}
+		//Tratamento de erro
+		if (*(signals->option) != 0 && *(signals->option) != 1 && func != 0 && func != 2 && func != 4 && func != 5 && func != 10 && func != 12) {
+			printf("Término devido à operação inválida da ULA.\n");
+			ERRO = 1;
 		}
-		*/
 
-		printf("ALU_CONTROL: %d %d %d\n", *(signals->option), *(signals->input), *(signals->output));
+    // Inicializa como 0
+    *(signals->output) = 0;
+
+    // Primeiro bit
+    *(signals->output) |= ( (op1 == 0b10) & ( (func == 0b000101) | (func == 0b001010) ) );
+
+    // Segundo bit
+    *(signals->output) |= ( ((op0 == 0b00) & (op1 == 0b00)) | (op0 == 0b01) | ((op1 == 0b10) &
+    ((func == 0b000000) | (func == 0b000010) | (func == 0b001010)))) << 1;
+
+    // Terceiro bit
+    *(signals->output) |= ( (op0 == 0b01) | ( (op1 == 0b10) & ( (func == 0b000010) | (func == 0b001010)))) << 2;
 
 		sem_post(signals->done);
 	}
@@ -767,14 +736,7 @@ void* CONTROL_main(void * args){
 		//"s" e "op" são variáveis utilizadas com o único propósito de facilitar a visualização e, consequentemente, a correção do trabalho
 		char s = signals->currentState;
 		char op = *(signals->option);
-		
-		printf("OP IN: %d ", (int)op);
-		for(int i = 7; i >= 0; i--)
-			printf("%d", (int)(op >> i & 1));
-		printf("\n");
-		
-		printf("STATE IN: %d\n", (int)signals->currentState);
-		
+
 		signals->currentState = 0;
 
 		#define	JUMP 0b000010
@@ -788,6 +750,13 @@ void* CONTROL_main(void * args){
 		#define ANDI 0b001100
 		#define BEQ 0b000100
 		#define BNE 0b000101
+
+		//Tratamento de erro
+		if (op != JUMP && op != JR && op != JAL && op != JALR && op != LW && op != SW && op != ADDI &&
+				op != RTYPE && op != ANDI && op != BEQ && op != BNE) {
+			printf("Término devido à tentativa de execução de intrução inválida.\n");
+			ERRO = 1;
+		}
 
 		signals->currentState |= ( (s==0) | ((s==1) & ( (op == JUMP)|(op == JR)|(op==JALR) )) | (s==2) | (s==6) | (s==10) );
 
@@ -821,8 +790,6 @@ void* CONTROL_main(void * args){
 		*(signals->output) |= (s==0) << 16;	//IRWrite
 		*(signals->output) |= (s==4) << 17;	//MemtoReg0
 		*(signals->output) |= ((s==14) | (s==15)) << 18;	//MemtoReg1
-
-		printf("OP: %d, STATE: %d\n", (int)op, (int)signals->currentState);
 
 		sem_post(signals->done);
 	}
@@ -896,8 +863,6 @@ void load_instructions(unsigned char * memory){
 		memory[currPos+1] = (c >> 16) & 0xFF;
 		memory[currPos+2] = (c >> 8) & 0xFF;
 		memory[currPos+3] = c & 0xFF;
-
-		printf("Load %d: %d | %d %d %d %d\n", currPos, c, memory[currPos], memory[currPos+1], memory[currPos+2], memory[currPos+3]);
 
 		currPos += 4;
 	}
@@ -1047,9 +1012,8 @@ int main()
 	int oldA2 = registers->registers[6];
 
 	// Execution loop
-	while(IROut != -1){
+	while(IROut != -1 && ERRO != 1){
 		print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
-		
 
 		// Compute logic
 		sem_post(UC->begin);
@@ -1126,7 +1090,6 @@ int main()
 			sem_post(IR->begin);
 		}
 
-
 		sem_wait(ALUOutReg->done);
 		sem_wait(RegA->done);
 		sem_wait(RegB->done);
@@ -1137,10 +1100,17 @@ int main()
 		sem_post(RegB->begin);
 		sem_post(MEMDataReg->begin);
 
+		sem_guarantee(PC->done);
+		sem_guarantee(IR->done);
 		sem_guarantee(ALUOutReg->done);
 		sem_guarantee(RegA->done);
 		sem_guarantee(RegB->done);
 		sem_guarantee(MEMDataReg->done);
+
+		if (PCOut % 4 != 0) {
+			printf("Término devido a acesso inválido de memória (PC não é múltiplo de 4).\n");
+			ERRO = 1;
+		}
 
 		if(pc_write(UCOut, ALUOutZero))
 			sem_guarantee(PC->done);
