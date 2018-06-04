@@ -1047,7 +1047,7 @@ int main()
 	int oldA2 = registers->registers[6];
 
 	// Execution loop
-	while(IROut != -1){
+	while(1){
 		print_state(PCOut, IROut, MEMOutReg, RegAOut, RegBOut, ALUOut, UCOut, registers, memory);
 		
 
@@ -1116,6 +1116,9 @@ int main()
 		sem_guarantee(toPCMux->done);
 		sem_guarantee(registers->done);
 
+		if(IROut == -1)
+			break;
+		
 		// Write registers
 		if(pc_write(UCOut, ALUOutZero)){
 			sem_wait(PC->done);
