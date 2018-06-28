@@ -863,9 +863,9 @@ void print_state(int pc, int ir, int mdr, int a, int b, int aluOut, int control,
 
 	printf("\n");
 	printf("Memoria (enderecos a byte)\n");
-	for(int i = 0; i < 32; i++){
+	for(int i = 0; i < 8; i++){
 		for(int j = 0; j < 4; j++){
-			printf("[%02d]=%05d\t", i+32*j, memory->memory[i+32*j]);
+			printf("[%02u]=%u\t", 4*i+32*j, *((unsigned int*)(memory->memory + 4*i+32*j)));
 		}
 		printf("\n");
 	}
